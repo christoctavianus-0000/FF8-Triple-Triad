@@ -1,0 +1,19 @@
+{
+  "name": "Triple Triad — Final Fantasy VIII",
+  "short_name": "Triple Triad",
+  "description": "Playable 1:1 recreation of Final Fantasy VIII's Triple Triad card mini-game.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#141923",
+  "theme_color": "#141923",
+  "icons": [
+    {
+      "src": "./icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

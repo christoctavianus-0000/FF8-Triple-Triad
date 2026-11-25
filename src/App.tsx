@@ -1,0 +1,676 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  BookOpen,
+  Globe,
+  HelpCircle,
+  Music,
+  Settings,
+  Sliders,
+  Volume2,
+  VolumeX,
+} from 'lucide-react';
+import { ALL_CARDS } from './data/cards';
+import { NPCS_BY_ID } from './data/opponents';
+import { REGIONS, SPECIAL_RULE_INFO, TRADE_RULE_INFO } from './data/regions';
+import { soundEngine } from './audio/soundEngine';
+import { buildNpcHand, createMatch } from './engine/engine';
+import {
+  applyDominanceAndDegeneration,
+  applyQueenTradeInfluence,
+  applyStudentRuleReset,
+  resolveRuleMixOutcome,
+} from './engine/regionalRules';
+import {
+  applyTradeToProfile,
+  getEffectiveCollection,
+  getUniqueCollectedCount,
+  loadProfile,
+  resetProfile,
+  saveProfile,
+  updateStatsAfterMatch,
+} from './state/profileStore';
+import type {
+  AiTier,
+  MatchState,
+  NpcDefinition,
+  ProfileState,
+  RegionId,
+  SpecialRule,
+  TradeResolution,
+  TradeRule,
+} from './types/tripleTriad';
+import { CardBinder } from './components/CardBinder';
+import { CustomMatchScreen } from './components/CustomMatchScreen';
+import { HandSelectModal } from './components/HandSelectModal';
+import { MatchScreen } from './components/MatchScreen';
+import { MobileSheet } from './components/MobileSheet';
+import { WorldTourScreen } from './components/WorldTourScreen';
+
+type ActiveTab = 'world' | 'custom' | 'binder';
+
+interface PendingChallenge {
+  mode: 'campaign' | 'custom';
+  npc: NpcDefinition | null;
+  regionId: RegionId | null;
+  opponentName: string;
+  opponentTitle: string;
+  aiTier: AiTier;
+  deckLevels: number[];
+  rules: SpecialRule[];
+  tradeRule: TradeRule;
+  mixRules: boolean;
+  sandbox: boolean;
+  victoryLine: string;
+  defeatLine: string;
+}
+
+export const App: React.FC = () => {
+  const [profile, setProfile] = useState<ProfileState>(() => loadProfile());
+  const [tab, setTab] = useState<ActiveTab>('world');
+  const [pendingChallenge, setPendingChallenge] = useState<PendingChallenge | null>(null);
+  const [activeMatch, setActiveMatch] = useState<{
+    match: MatchState;
+    challenge: PendingChallenge;
+  } | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    saveProfile(profile);
+  }, [profile]);
+
+  useEffect(() => {
+    soundEngine.setEnabled(profile.settings.soundEnabled);
+    soundEngine.setBgmEnabled(profile.settings.bgmEnabled);
+  }, [profile.settings.soundEnabled, profile.settings.bgmEnabled]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 5000);
+    return () => window.clearTimeout(t);
+  }, [toast]);
+
+  const effectiveCollection = useMemo(() => getEffectiveCollection(profile), [profile]);
+  const uniqueOwnedCount = useMemo(
+    () => getUniqueCollectedCount(profile.collection),
+    [profile.collection],
+  );
+
+  const handleChallengeNpc = useCallback(
+    (npc: NpcDefinition, mixRules: boolean, declinedCarry: boolean) => {
+      const regionId = npc.isQueenOfCards ? profile.queenRegionId : npc.regionId;
+      const regionState = profile.regions[regionId];
+
+      let nextProfile = profile;
+      const notices: string[] = [];
+
+      if (npc.isRuleResetter) {
+        // Balamb Student Skipping Class immediately wipes Balamb rules and carries none
+        nextProfile = {
+          ...nextProfile,
+          regions: applyStudentRuleReset(nextProfile.regions),
+          carriedRegionId: 'balamb',
+          carriedRules: [],
+        };
+        notices.push('Balamb special rules were cleared by the Student Skipping Class!');
+      } else if (declinedCarry) {
+        nextProfile = {
+          ...nextProfile,
+          carriedRegionId: regionId,
+          carriedRules: [...regionState.specialRules],
+        };
+      }
+
+      // Queen of Cards + Dominance/Degeneration trade checks happen when challenge is accepted
+      let effectiveTradeRule = regionState.tradeRule;
+      if (!npc.isRuleResetter) {
+        const queenInfluence = applyQueenTradeInfluence({
+          challengedRegionId: regionId,
+          regionTradeRule: effectiveTradeRule,
+          queenRegionId: nextProfile.queenRegionId,
+          queenTradeRule: nextProfile.queenTradeRule,
+          isQueenMatch: Boolean(npc.isQueenOfCards),
+          relocateQueen: Boolean(npc.isQueenOfCards),
+        });
+        effectiveTradeRule = queenInfluence.regionTradeRule;
+
+        const nextRegions = {
+          ...nextProfile.regions,
+          [regionId]: {
+            ...nextProfile.regions[regionId],
+            tradeRule: effectiveTradeRule,
+          },
+        };
+
+        const domRes = applyDominanceAndDegeneration({
+          regions: nextRegions,
+          challengedRegionId: regionId,
+          dominanceRegionId: nextProfile.dominanceRegionId,
+          dominanceLevel: nextProfile.dominanceLevel,
+          degenerationCounter: nextProfile.degenerationCounter,
+        });
+
+        // Rule Mix Spread / Abolish resolution
+        let updatedRegionRules = [...domRes.regions[regionId].specialRules];
+        const matchRules = npc.isRuleResetter
+          ? []
+          : mixRules
+            ? Array.from(new Set([...updatedRegionRules, ...nextProfile.carriedRules]))
+            : [...updatedRegionRules];
+
+        if (mixRules) {
+          const outcome = resolveRuleMixOutcome(nextProfile.carriedRules, updatedRegionRules);
+          updatedRegionRules = outcome.updatedRegionRules;
+          domRes.regions[regionId] = {
+            ...domRes.regions[regionId],
+            specialRules: updatedRegionRules,
+          };
+          if (outcome.kind !== 'none') {
+            notices.push(outcome.message);
+          }
+        }
+
+        nextProfile = {
+          ...nextProfile,
+          regions: domRes.regions,
+          dominanceRegionId: domRes.dominanceRegionId,
+          dominanceLevel: domRes.dominanceLevel,
+          degenerationCounter: domRes.degenerationCounter,
+          queenTradeRule: queenInfluence.queenTradeRule,
+          queenRegionId: queenInfluence.queenMovedToRegionId ?? nextProfile.queenRegionId,
+          carriedRegionId: regionId,
+          carriedRules: updatedRegionRules,
+        };
+
+        notices.push(...queenInfluence.announcements, ...domRes.announcements);
+
+        if (nextProfile !== profile) {
+          setProfile(nextProfile);
+        }
+        if (notices.length > 0) {
+          setToast(notices[0]);
+        }
+
+        setPendingChallenge({
+          mode: 'campaign',
+          npc,
+          regionId,
+          opponentName: npc.name,
+          opponentTitle: `${REGIONS[regionId].name} · ${npc.title}`,
+          aiTier: npc.aiTier,
+          deckLevels: npc.deckLevels,
+          rules: matchRules,
+          tradeRule: npc.isQueenOfCards ? 'one' : effectiveTradeRule,
+          mixRules,
+          sandbox: nextProfile.settings.sandboxMode,
+          victoryLine: npc.victoryLine,
+          defeatLine: npc.defeatLine,
+        });
+        return;
+      }
+
+      setProfile(nextProfile);
+      if (notices.length > 0) setToast(notices[0]);
+
+      setPendingChallenge({
+        mode: 'campaign',
+        npc,
+        regionId,
+        opponentName: npc.name,
+        opponentTitle: `${REGIONS[regionId].name} · ${npc.title}`,
+        aiTier: npc.aiTier,
+        deckLevels: npc.deckLevels,
+        rules: [],
+        tradeRule: regionState.tradeRule,
+        mixRules: false,
+        sandbox: nextProfile.settings.sandboxMode,
+        victoryLine: npc.victoryLine,
+        defeatLine: npc.defeatLine,
+      });
+    },
+    [profile],
+  );
+
+  const handleLaunchCustomMatch = useCallback(
+    (config: {
+      aiTier: AiTier;
+      deckLevels: number[];
+      rules: SpecialRule[];
+      tradeRule: TradeRule;
+      sandbox: boolean;
+    }) => {
+      setPendingChallenge({
+        mode: 'custom',
+        npc: null,
+        regionId: null,
+        opponentName: `Skirmish ${config.aiTier.toUpperCase()}`,
+        opponentTitle: 'Custom Rules Match',
+        aiTier: config.aiTier,
+        deckLevels: config.deckLevels,
+        rules: config.rules,
+        tradeRule: config.tradeRule,
+        mixRules: false,
+        sandbox: config.sandbox,
+        victoryLine: 'Sharp tactics across the custom grid!',
+        defeatLine: 'Well fought—adjust your ranks and strike back!',
+      });
+    },
+    [],
+  );
+
+  const handleStartMatch = useCallback(
+    (playerHand: string[]) => {
+      if (!pendingChallenge) return;
+      const opponentHand = pendingChallenge.npc
+        ? buildNpcHand(pendingChallenge.npc, ALL_CARDS, profile.rareCardHolders)
+        : buildNpcHand(
+            {
+              id: 'custom-ai',
+              name: pendingChallenge.opponentName,
+              title: pendingChallenge.opponentTitle,
+              regionId: 'balamb',
+              location: 'Custom Arena',
+              deckLevels: pendingChallenge.deckLevels,
+              rareCardIds: [],
+              aiTier: pendingChallenge.aiTier,
+              greeting: '',
+              victoryLine: '',
+              defeatLine: '',
+            },
+            ALL_CARDS,
+            profile.rareCardHolders,
+          );
+
+      const match = createMatch({
+        playerHand,
+        opponentHand,
+        rules: pendingChallenge.rules,
+        tradeRule: pendingChallenge.tradeRule,
+      });
+
+      setProfile((prev) => ({
+        ...prev,
+        lastDeckIds: playerHand,
+      }));
+      setActiveMatch({ match, challenge: pendingChallenge });
+      setPendingChallenge(null);
+    },
+    [pendingChallenge, profile.rareCardHolders],
+  );
+
+  const handleFinishMatch = useCallback(
+    (finalMatch: MatchState, trade: TradeResolution) => {
+      const challenge = activeMatch?.challenge;
+      const skipCollection = Boolean(challenge?.sandbox);
+      const npcId = challenge?.npc?.id ?? null;
+
+      let resultMeta = {
+        protectedCardIds: [] as string[],
+        queenForgeMessages: [] as string[],
+        extraMessages: [] as string[],
+      };
+
+      setProfile((prev) => {
+        const traded = applyTradeToProfile(prev, trade, npcId, skipCollection);
+        const withStats = updateStatsAfterMatch(traded.profile, finalMatch, npcId);
+        resultMeta = {
+          protectedCardIds: traded.appliedTrade.protectedCardIds,
+          queenForgeMessages: traded.queenForgeMessages,
+          extraMessages: [],
+        };
+
+        if (
+          finalMatch.winner === 'player' &&
+          npcId &&
+          NPCS_BY_ID[npcId]?.isCcMember &&
+          withStats.ccGroupStage > prev.ccGroupStage
+        ) {
+          resultMeta.extraMessages.push(
+            `CC Group Rank Advanced (${withStats.ccGroupStage}/7)!`,
+          );
+        }
+        return withStats;
+      });
+
+      return resultMeta;
+    },
+    [activeMatch],
+  );
+
+  return (
+    <div className="tt-shell">
+      {/* Top Application Header */}
+      <header className="tt-window tt-topbar">
+        <div className="tt-brand">
+          <div className="tt-brand-emblem">TT</div>
+          <div>
+            <h1>Triple Triad</h1>
+            <span className="tt-brand-sub">Final Fantasy VIII</span>
+          </div>
+        </div>
+
+        <div className="tt-topbar-stats">
+          <span className="tt-pill tt-pill--gold">
+            Album {uniqueOwnedCount}/110 {uniqueOwnedCount === 110 ? '★' : ''}
+          </span>
+          <span className="tt-pill">
+            {profile.stats.wins}W–{profile.stats.losses}L–{profile.stats.draws}D
+          </span>
+          {profile.settings.sandboxMode && (
+            <span className="tt-pill tt-pill--rule">Sandbox</span>
+          )}
+        </div>
+
+        <div className="tt-topbar-actions">
+          <button
+            type="button"
+            className={`tt-icon-btn ${profile.settings.soundEnabled ? 'is-active' : ''}`}
+            aria-label={profile.settings.soundEnabled ? 'Mute SFX' : 'Unmute SFX'}
+            title={profile.settings.soundEnabled ? 'Mute SFX' : 'Unmute SFX'}
+            onClick={() =>
+              setProfile((p) => ({
+                ...p,
+                settings: { ...p.settings, soundEnabled: !p.settings.soundEnabled },
+              }))
+            }
+          >
+            {profile.settings.soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+          </button>
+          <button
+            type="button"
+            className={`tt-icon-btn ${profile.settings.bgmEnabled ? 'is-active' : ''}`}
+            aria-label="Toggle Triple Triad Synth Groove"
+            title="Toggle Synth BGM"
+            onClick={() =>
+              setProfile((p) => ({
+                ...p,
+                settings: { ...p.settings, bgmEnabled: !p.settings.bgmEnabled },
+              }))
+            }
+          >
+            <Music size={16} />
+          </button>
+          <button
+            type="button"
+            className="tt-icon-btn"
+            aria-label="Rules Guide"
+            title="Triple Triad Rules Guide"
+            onClick={() => setGuideOpen(true)}
+          >
+            <HelpCircle size={16} />
+          </button>
+          <button
+            type="button"
+            className="tt-icon-btn"
+            aria-label="Settings"
+            title="Settings"
+            onClick={() => {
+              setConfirmReset(false);
+              setSettingsOpen(true);
+            }}
+          >
+            <Settings size={16} />
+          </button>
+        </div>
+      </header>
+
+      {toast && (
+        <div className="tt-toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      )}
+
+      {/* Primary View Content */}
+      <main className="tt-main-content">
+        {activeMatch ? (
+          <MatchScreen
+            initialMatch={activeMatch.match}
+            opponentName={activeMatch.challenge.opponentName}
+            opponentTitle={activeMatch.challenge.opponentTitle}
+            aiTier={activeMatch.challenge.aiTier}
+            showHints={profile.settings.showHints}
+            sandboxMode={activeMatch.challenge.sandbox}
+            victoryLine={activeMatch.challenge.victoryLine}
+            defeatLine={activeMatch.challenge.defeatLine}
+            onFinishAndReturn={handleFinishMatch}
+            onAbortMatch={() => setActiveMatch(null)}
+          />
+        ) : pendingChallenge ? (
+          <HandSelectModal
+            opponentName={pendingChallenge.opponentName}
+            opponentTitle={pendingChallenge.opponentTitle}
+            aiTier={pendingChallenge.aiTier}
+            rules={pendingChallenge.rules}
+            tradeRule={pendingChallenge.tradeRule}
+            collection={
+              pendingChallenge.sandbox ? getEffectiveCollection({ ...profile, settings: { ...profile.settings, sandboxMode: true } }) : effectiveCollection
+            }
+            initialHand={profile.lastDeckIds}
+            sandboxMode={pendingChallenge.sandbox}
+            onStartMatch={handleStartMatch}
+            onCancel={() => setPendingChallenge(null)}
+          />
+        ) : (
+          <>
+            <nav className="tt-nav-tabs" aria-label="Main sections">
+              <button
+                type="button"
+                className={`tt-nav-tab ${tab === 'world' ? 'is-active' : ''}`}
+                onClick={() => {
+                  soundEngine.playCursor();
+                  setTab('world');
+                }}
+              >
+                <Globe size={16} /> World Tour
+              </button>
+              <button
+                type="button"
+                className={`tt-nav-tab ${tab === 'custom' ? 'is-active' : ''}`}
+                onClick={() => {
+                  soundEngine.playCursor();
+                  setTab('custom');
+                }}
+              >
+                <Sliders size={16} /> Custom Match
+              </button>
+              <button
+                type="button"
+                className={`tt-nav-tab ${tab === 'binder' ? 'is-active' : ''}`}
+                onClick={() => {
+                  soundEngine.playCursor();
+                  setTab('binder');
+                }}
+              >
+                <BookOpen size={16} /> Card Album ({uniqueOwnedCount}/110)
+              </button>
+            </nav>
+
+            {tab === 'world' && (
+              <WorldTourScreen profile={profile} onChallengeNpc={handleChallengeNpc} />
+            )}
+            {tab === 'custom' && (
+              <CustomMatchScreen
+                sandboxMode={profile.settings.sandboxMode}
+                onToggleSandbox={(enabled) =>
+                  setProfile((p) => ({
+                    ...p,
+                    settings: { ...p.settings, sandboxMode: enabled },
+                  }))
+                }
+                onLaunchCustomMatch={handleLaunchCustomMatch}
+              />
+            )}
+            {tab === 'binder' && <CardBinder profile={profile} />}
+          </>
+        )}
+      </main>
+
+      {/* Settings Dialog */}
+      <MobileSheet
+        open={settingsOpen}
+        title="Settings & Save Data"
+        subtitle="Preferences and campaign options"
+        onClose={() => setSettingsOpen(false)}
+      >
+        <div className="tt-settings-list">
+          <label className="tt-setting-row">
+            <div>
+              <strong>Sound Effects</strong>
+              <p className="tt-muted">Classic cursor blips, card flips, and fanfares</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={profile.settings.soundEnabled}
+              onChange={(e) =>
+                setProfile((p) => ({
+                  ...p,
+                  settings: { ...p.settings, soundEnabled: e.target.checked },
+                }))
+              }
+            />
+          </label>
+
+          <label className="tt-setting-row">
+            <div>
+              <strong>Synth Groove BGM</strong>
+              <p className="tt-muted">Upbeat procedural card-table rhythm</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={profile.settings.bgmEnabled}
+              onChange={(e) =>
+                setProfile((p) => ({
+                  ...p,
+                  settings: { ...p.settings, bgmEnabled: e.target.checked },
+                }))
+              }
+            />
+          </label>
+
+          <label className="tt-setting-row">
+            <div>
+              <strong>Classic Rule Spread &amp; Abolish</strong>
+              <p className="tt-muted">Carry rules between regions with Mixed Rules offers</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={profile.settings.ruleSpreadEnabled}
+              onChange={(e) =>
+                setProfile((p) => ({
+                  ...p,
+                  settings: { ...p.settings, ruleSpreadEnabled: e.target.checked },
+                }))
+              }
+            />
+          </label>
+
+          <label className="tt-setting-row">
+            <div>
+              <strong>Capture Preview Hints</strong>
+              <p className="tt-muted">Show +Flip / Same / Plus previews on empty cells</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={profile.settings.showHints}
+              onChange={(e) =>
+                setProfile((p) => ({
+                  ...p,
+                  settings: { ...p.settings, showHints: e.target.checked },
+                }))
+              }
+            />
+          </label>
+
+          <label className="tt-setting-row">
+            <div>
+              <strong>Sandbox Mode (All 110 Cards)</strong>
+              <p className="tt-muted">Unlock every card for deckbuilding without altering campaign save</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={profile.settings.sandboxMode}
+              onChange={(e) =>
+                setProfile((p) => ({
+                  ...p,
+                  settings: { ...p.settings, sandboxMode: e.target.checked },
+                }))
+              }
+            />
+          </label>
+
+          <div className="tt-setting-reset">
+            {!confirmReset ? (
+              <button
+                type="button"
+                className="tt-btn tt-btn--danger"
+                onClick={() => setConfirmReset(true)}
+              >
+                Reset Campaign Save
+              </button>
+            ) : (
+              <div className="tt-btn-row">
+                <button
+                  type="button"
+                  className="tt-btn tt-btn--danger"
+                  onClick={() => {
+                    const fresh = resetProfile();
+                    setProfile(fresh);
+                    setActiveMatch(null);
+                    setPendingChallenge(null);
+                    setConfirmReset(false);
+                    setSettingsOpen(false);
+                    setToast('Campaign save reset to Balamb starter deck.');
+                  }}
+                >
+                  Confirm Wipe Save
+                </button>
+                <button
+                  type="button"
+                  className="tt-btn tt-btn--ghost"
+                  onClick={() => setConfirmReset(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </MobileSheet>
+
+      {/* Complete Triple Triad Rules Guide */}
+      <MobileSheet
+        open={guideOpen}
+        title="How to Play Triple Triad"
+        subtitle="1:1 Final Fantasy VIII Rules Reference"
+        onClose={() => setGuideOpen(false)}
+        wide
+      >
+        <div className="tt-rules-ref">
+          <div className="tt-rule-ref-item">
+            <h4>Core Gameplay</h4>
+            <p>
+              Each player holds 5 cards (10 total points). Place cards onto the 3×3 grid. If your
+              placed card’s touching rank is strictly greater than an adjacent opponent card’s
+              touching rank (A = 10), that card flips to your color. Highest total after 9 turns
+              wins!
+            </p>
+          </div>
+          {Object.entries(SPECIAL_RULE_INFO).map(([key, info]) => (
+            <div key={key} className="tt-rule-ref-item">
+              <h4>Special — {info.label}</h4>
+              <p>{info.detail}</p>
+            </div>
+          ))}
+          {Object.entries(TRADE_RULE_INFO).map(([key, info]) => (
+            <div key={key} className="tt-rule-ref-item">
+              <h4>Trade — {info.label}</h4>
+              <p>{info.shortDesc}</p>
+            </div>
+          ))}
+        </div>
+      </MobileSheet>
+    </div>
+  );
+};
