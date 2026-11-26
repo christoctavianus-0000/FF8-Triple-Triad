@@ -1,16 +1,23 @@
 import React, { useMemo, useState } from 'react';
-import { Award, Search, X } from 'lucide-react';
+import { Award, MapPin, Search, X } from 'lucide-react';
 import { ALL_CARDS, CARDS_BY_ID } from '../data/cards';
-import { NPCS_BY_ID } from '../data/opponents';
+import { NPCS, NPCS_BY_ID, QUEEN_QUEST_STEPS } from '../data/opponents';
 import { REGIONS } from '../data/regions';
 import { formatRank } from '../engine/rules';
 import { soundEngine } from '../audio/soundEngine';
-import type { CardDefinition, ElementType, ProfileState } from '../types/tripleTriad';
+import type {
+  CardDefinition,
+  ElementType,
+  ProfileState,
+  RareCardHolder,
+  RegionId,
+} from '../types/tripleTriad';
 import { CardView } from './CardView';
 import { MobileSheet } from './MobileSheet';
 
 interface CardBinderProps {
   profile: ProfileState;
+  onJumpToRegion?: (regionId: RegionId) => void;
 }
 
 const ELEMENTS: readonly ElementType[] = [
@@ -25,11 +32,43 @@ const ELEMENTS: readonly ElementType[] = [
   'holy',
 ];
 
-export const CardBinder: React.FC<CardBinderProps> = ({ profile }) => {
+interface RecoveryInfo {
+  shortLabel: string;
+  detail: string;
+  targetRegionId: RegionId | null;
+}
+
+function resolveHolderMeta(
+  holder: RareCardHolder | undefined,
+  queenRegionId: RegionId,
+): { label: string; location: string; regionId: RegionId | null } {
+  if (!holder) return { label: 'Unknown', location: 'Unknown', regionId: null };
+  if (holder === 'queen') {
+    return {
+      label: 'Queen of Cards',
+      location: `${REGIONS[queenRegionId].name} (Travels Across Regions)`,
+      regionId: queenRegionId,
+    };
+  }
+  if (holder.startsWith('npc:')) {
+    const npc = NPCS_BY_ID[holder.slice(4)];
+    if (npc) {
+      const rid = npc.isQueenOfCards ? queenRegionId : npc.regionId;
+      return {
+        label: npc.name,
+        location: `${REGIONS[rid].name} (${npc.location})`,
+        regionId: rid,
+      };
+    }
+  }
+  return { label: 'Unknown', location: 'Unknown', regionId: null };
+}
+
+export const CardBinder: React.FC<CardBinderProps> = ({ profile, onJumpToRegion }) => {
   const [search, setSearch] = useState('');
   const [levelFilter, setLevelFilter] = useState<number | 'all'>('all');
   const [elemFilter, setElemFilter] = useState<ElementType | 'all'>('all');
-  const [ownedOnly, setOwnedOnly] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'owned' | 'lost'>('all');
   const [inspectedCard, setInspectedCard] = useState<CardDefinition | null>(null);
 
   const uniqueOwned = useMemo(
@@ -37,44 +76,123 @@ export const CardBinder: React.FC<CardBinderProps> = ({ profile }) => {
     [profile.collection],
   );
 
+  const everCollectedSet = useMemo(
+    () => new Set([...profile.everCollectedIds, ...Object.keys(profile.collection)]),
+    [profile.everCollectedIds, profile.collection],
+  );
+
+  const lostCount = useMemo(
+    () =>
+      ALL_CARDS.filter(
+        (c) =>
+          (profile.collection[c.id] ?? 0) === 0 &&
+          (everCollectedSet.has(c.id) || Boolean(profile.lostCardHolders[c.id])),
+      ).length,
+    [profile.collection, everCollectedSet, profile.lostCardHolders],
+  );
+
+  const isCardLost = (cardId: string): boolean =>
+    (profile.collection[cardId] ?? 0) === 0 &&
+    (everCollectedSet.has(cardId) || Boolean(profile.lostCardHolders[cardId]));
+
   const filteredCards = useMemo(() => {
     const q = search.trim().toLowerCase();
     return ALL_CARDS.filter((card) => {
+      const owned = (profile.collection[card.id] ?? 0) > 0;
+      const lost =
+        !owned &&
+        (everCollectedSet.has(card.id) || Boolean(profile.lostCardHolders[card.id]));
+
       if (levelFilter !== 'all' && card.level !== levelFilter) return false;
       if (elemFilter !== 'all' && card.element !== elemFilter) return false;
-      if (ownedOnly && (profile.collection[card.id] ?? 0) === 0) return false;
+      if (statusFilter === 'owned' && !owned) return false;
+      if (statusFilter === 'lost' && !lost) return false;
       if (q && !card.name.toLowerCase().includes(q) && !card.cardMod.toLowerCase().includes(q)) {
         return false;
       }
       return true;
     });
-  }, [search, levelFilter, elemFilter, ownedOnly, profile.collection]);
+  }, [
+    search,
+    levelFilter,
+    elemFilter,
+    statusFilter,
+    profile.collection,
+    everCollectedSet,
+    profile.lostCardHolders,
+  ]);
 
-  const describeHolder = (card: CardDefinition): string => {
-    if (!card.isRare) {
-      return `Common Lv${card.level} card — won from regional NPCs using Lv${card.level} decks.`;
+  const getRecoveryInfo = (card: CardDefinition): RecoveryInfo => {
+    const owned = (profile.collection[card.id] ?? 0) > 0;
+    const lost = isCardLost(card.id);
+
+    if (owned) {
+      return {
+        shortLabel: 'In Collection',
+        detail: 'Held by Squall (In your collection).',
+        targetRegionId: null,
+      };
     }
-    const holder = profile.rareCardHolders[card.id];
-    if (holder === 'player' || (profile.collection[card.id] ?? 0) > 0) {
-      return 'Held by Squall (In your collection)';
-    }
-    if (holder === 'unforged') {
-      return 'Not yet forged — advance the Queen of Cards quest!';
-    }
-    if (holder === 'queen') {
-      return `Held by Queen of Cards (${REGIONS[profile.queenRegionId].name})`;
-    }
-    if (holder?.startsWith('npc:')) {
-      const npc = NPCS_BY_ID[holder.slice(4)];
-      if (npc) {
-        const regionName = npc.isQueenOfCards
-          ? REGIONS[profile.queenRegionId].name
-          : REGIONS[npc.regionId].name;
-        return `Held by ${npc.name} in ${regionName} (${npc.location})`;
+
+    if (card.isRare) {
+      const holder = profile.rareCardHolders[card.id];
+      if (holder === 'unforged') {
+        const quest = QUEEN_QUEST_STEPS.find((s) => s.forgedCardId === card.id);
+        if (quest) {
+          const loseName = CARDS_BY_ID[quest.loseCardId]?.name ?? quest.loseCardId;
+          const reclaimNpc = NPCS_BY_ID[quest.reclaimNpcId];
+          const queenRegionName = REGIONS[profile.queenRegionId].name;
+          return {
+            shortLabel: `Queen Quest (${queenRegionName})`,
+            detail: `Not yet forged. Lose ${loseName} to the Queen of Cards in ${queenRegionName}, then win ${card.name} from ${reclaimNpc?.name ?? 'her contact'} (${reclaimNpc?.location ?? ''}).`,
+            targetRegionId: profile.queenRegionId,
+          };
+        }
+        return {
+          shortLabel: 'Queen Quest',
+          detail: 'Not yet forged — advance the Queen of Cards quest!',
+          targetRegionId: profile.queenRegionId,
+        };
       }
+
+      const meta = resolveHolderMeta(holder, profile.queenRegionId);
+      return {
+        shortLabel: meta.label,
+        detail: lost
+          ? `Lost card! Challenge ${meta.label} in ${meta.location} to win ${card.name} back.`
+          : `Held by ${meta.label} in ${meta.location}.`,
+        targetRegionId: meta.regionId,
+      };
     }
-    return 'Unknown location';
+
+    // Common Lv 1-7 card
+    const matchingNpcs = NPCS.filter(
+      (n) => !n.isQueenOfCards && n.deckLevels.includes(card.level),
+    ).slice(0, 3);
+    const farmHints = matchingNpcs
+      .map((n) => `${n.name} (${REGIONS[n.regionId].name})`)
+      .join(', ');
+
+    const lostHolder = profile.lostCardHolders[card.id];
+    if (lost && lostHolder) {
+      const meta = resolveHolderMeta(lostHolder, profile.queenRegionId);
+      return {
+        shortLabel: meta.label,
+        detail: `Lost to ${meta.label} in ${meta.location}. Reclaim a copy by defeating Lv${card.level} players such as ${farmHints}.`,
+        targetRegionId: meta.regionId ?? matchingNpcs[0]?.regionId ?? null,
+      };
+    }
+
+    return {
+      shortLabel: matchingNpcs[0]?.name ?? `Lv${card.level} Duelists`,
+      detail: `Common Lv${card.level} card — won from regional NPCs such as ${farmHints}.`,
+      targetRegionId: matchingNpcs[0]?.regionId ?? null,
+    };
   };
+
+  const inspectedRecovery = inspectedCard ? getRecoveryInfo(inspectedCard) : null;
+  const inspectedOwned = inspectedCard ? (profile.collection[inspectedCard.id] ?? 0) > 0 : false;
+  const inspectedLost = inspectedCard ? isCardLost(inspectedCard.id) : false;
 
   return (
     <div className="tt-binder">
@@ -86,7 +204,8 @@ export const CardBinder: React.FC<CardBinderProps> = ({ profile }) => {
               {uniqueOwned === 110 && <Award size={18} className="tt-text-gold" />}
             </h2>
             <p className="tt-muted">
-              Collect all 110 cards across Levels 1–10 to earn the golden Triple Triad Star.
+              Collect all 110 cards across Levels 1–10. Any card you owned and lost remains
+              revealed in gray with recovery details.
             </p>
           </div>
           <div className="tt-search-box">
@@ -147,13 +266,29 @@ export const CardBinder: React.FC<CardBinderProps> = ({ profile }) => {
               ))}
             </select>
 
-            <button
-              type="button"
-              className={`tt-btn tt-btn--sm ${ownedOnly ? 'tt-btn--primary' : 'tt-btn--ghost'}`}
-              onClick={() => setOwnedOnly((v) => !v)}
-            >
-              Owned Only
-            </button>
+            <div className="tt-level-tabs" role="group" aria-label="Ownership status filter">
+              <button
+                type="button"
+                className={`tt-tab ${statusFilter === 'all' ? 'is-active' : ''}`}
+                onClick={() => setStatusFilter('all')}
+              >
+                All
+              </button>
+              <button
+                type="button"
+                className={`tt-tab ${statusFilter === 'owned' ? 'is-active' : ''}`}
+                onClick={() => setStatusFilter('owned')}
+              >
+                Owned
+              </button>
+              <button
+                type="button"
+                className={`tt-tab ${statusFilter === 'lost' ? 'is-active' : ''}`}
+                onClick={() => setStatusFilter('lost')}
+              >
+                Lost ({lostCount})
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -168,7 +303,7 @@ export const CardBinder: React.FC<CardBinderProps> = ({ profile }) => {
               setSearch('');
               setLevelFilter('all');
               setElemFilter('all');
-              setOwnedOnly(false);
+              setStatusFilter('all');
             }}
           >
             Reset Filters
@@ -179,11 +314,16 @@ export const CardBinder: React.FC<CardBinderProps> = ({ profile }) => {
           {filteredCards.map((card) => {
             const count = profile.collection[card.id] ?? 0;
             const owned = count > 0;
+            const lost = isCardLost(card.id);
+            const recovery = lost ? getRecoveryInfo(card) : null;
+
             return (
               <button
                 key={card.id}
                 type="button"
-                className={`tt-binder-tile ${owned ? 'is-owned' : 'is-unowned'}`}
+                className={`tt-binder-tile ${
+                  owned ? 'is-owned' : lost ? 'is-lost' : 'is-unowned'
+                }`}
                 onClick={() => {
                   soundEngine.playCursor();
                   setInspectedCard(card);
@@ -191,11 +331,12 @@ export const CardBinder: React.FC<CardBinderProps> = ({ profile }) => {
               >
                 <div className="tt-binder-card-wrap">
                   <CardView
-                    cardId={owned ? card.id : null}
-                    owner="player"
-                    faceDown={!owned}
+                    cardId={owned || lost ? card.id : null}
+                    owner={owned ? 'player' : 'opponent'}
+                    faceDown={!owned && !lost}
                     compact
                   />
+                  {lost && <span className="tt-binder-lost-pill">LOST</span>}
                 </div>
                 <div className="tt-binder-meta">
                   <span className="tt-binder-idx">
@@ -206,8 +347,13 @@ export const CardBinder: React.FC<CardBinderProps> = ({ profile }) => {
                     {card.name}
                   </strong>
                   <span className="tt-binder-count">
-                    {owned ? `Owned ×${count}` : 'Unowned'}
+                    {owned ? `Owned ×${count}` : lost ? 'Lost' : 'Unowned'}
                   </span>
+                  {lost && recovery && (
+                    <span className="tt-binder-reclaim" title={recovery.detail}>
+                      Reclaim: {recovery.shortLabel}
+                    </span>
+                  )}
                 </div>
               </button>
             );
@@ -225,15 +371,25 @@ export const CardBinder: React.FC<CardBinderProps> = ({ profile }) => {
         }
         onClose={() => setInspectedCard(null)}
       >
-        {inspectedCard && (
+        {inspectedCard && inspectedRecovery && (
           <div className="tt-inspector">
-            <div className="tt-inspector-card">
+            <div className={`tt-inspector-card ${inspectedLost ? 'is-lost' : ''}`}>
               <CardView
                 cardId={inspectedCard.id}
-                owner={(profile.collection[inspectedCard.id] ?? 0) > 0 ? 'player' : 'opponent'}
+                owner={inspectedOwned ? 'player' : 'opponent'}
               />
             </div>
             <div className="tt-inspector-details">
+              <div className="tt-pill-row" style={{ marginBottom: 8 }}>
+                {inspectedOwned ? (
+                  <span className="tt-pill tt-pill--ok">OWNED</span>
+                ) : inspectedLost ? (
+                  <span className="tt-pill tt-pill--lost">LOST — RECLAIMABLE</span>
+                ) : (
+                  <span className="tt-pill">UNCOLLECTED</span>
+                )}
+              </div>
+
               <p>
                 <strong>Ranks:</strong> Top {formatRank(inspectedCard.ranks.top)} · Right{' '}
                 {formatRank(inspectedCard.ranks.right)} · Bottom{' '}
@@ -254,7 +410,33 @@ export const CardBinder: React.FC<CardBinderProps> = ({ profile }) => {
                 {profile.collection[inspectedCard.id] ?? 0}
                 {CARDS_BY_ID[inspectedCard.id]?.isRare ? ' (Unique Rare — max 1)' : ''}
               </p>
-              <p className="tt-notice tt-notice--info">{describeHolder(inspectedCard)}</p>
+
+              <p
+                className={`tt-notice ${
+                  inspectedLost ? 'tt-notice--gold' : 'tt-notice--info'
+                }`}
+              >
+                {inspectedRecovery.detail}
+              </p>
+
+              {!inspectedOwned &&
+                onJumpToRegion &&
+                inspectedRecovery.targetRegionId && (
+                  <button
+                    type="button"
+                    className="tt-btn tt-btn--gold tt-btn--sm"
+                    style={{ marginTop: 10 }}
+                    onClick={() => {
+                      const target = inspectedRecovery.targetRegionId!;
+                      soundEngine.playConfirm();
+                      setInspectedCard(null);
+                      onJumpToRegion(target);
+                    }}
+                  >
+                    <MapPin size={14} />
+                    Go to {REGIONS[inspectedRecovery.targetRegionId].name} in World Tour
+                  </button>
+                )}
             </div>
           </div>
         )}

@@ -1949,8 +1949,50 @@ select {
   opacity: 0.65;
 }
 
+.tt-binder-tile.is-lost {
+  border-color: rgba(184, 66, 84, 0.5);
+  background: #FFF9FA;
+}
+
+.tt-binder-tile.is-lost .tt-card-art,
+.tt-inspector-card.is-lost .tt-card-art {
+  filter: grayscale(0.86) contrast(0.92);
+}
+
 .tt-binder-card-wrap {
+  position: relative;
   width: 86px;
+}
+
+.tt-binder-lost-pill {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #9F1239;
+  color: #FFFFFF;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+}
+
+.tt-binder-reclaim {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: #8E2536;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tt-pill--lost {
+  border-color: rgba(184, 66, 84, 0.55);
+  background: #FFF1F2;
+  color: #9F1239;
 }
 
 .tt-binder-meta {

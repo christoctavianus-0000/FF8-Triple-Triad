@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Crown, MapPin, RefreshCw, ShieldCheck, Sparkles, Swords } from 'lucide-react';
 import { CARDS_BY_ID } from '../data/cards';
 import { NPCS, QUEEN_QUEST_STEPS } from '../data/opponents';
@@ -11,16 +11,24 @@ import { Ff8Cursor } from './Ff8Cursor';
 
 interface WorldTourScreenProps {
   profile: ProfileState;
+  initialRegionId?: RegionId | null;
   onChallengeNpc: (npc: NpcDefinition, mixRules: boolean, declinedCarry: boolean) => void;
 }
 
 export const WorldTourScreen: React.FC<WorldTourScreenProps> = ({
   profile,
+  initialRegionId = null,
   onChallengeNpc,
 }) => {
   const [selectedRegion, setSelectedRegion] = useState<RegionId>(
-    profile.carriedRegionId ?? 'balamb',
+    initialRegionId ?? profile.carriedRegionId ?? 'balamb',
   );
+
+  useEffect(() => {
+    if (initialRegionId) {
+      setSelectedRegion(initialRegionId);
+    }
+  }, [initialRegionId]);
   const [mixPromptNpc, setMixPromptNpc] = useState<NpcDefinition | null>(null);
   const [declinedAttempts, setDeclinedAttempts] = useState(0);
 

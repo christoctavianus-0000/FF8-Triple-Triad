@@ -73,6 +73,7 @@ interface PendingChallenge {
 export const App: React.FC = () => {
   const [profile, setProfile] = useState<ProfileState>(() => loadProfile());
   const [tab, setTab] = useState<ActiveTab>('atrium');
+  const [worldFocusRegion, setWorldFocusRegion] = useState<RegionId | null>(null);
   const [pendingChallenge, setPendingChallenge] = useState<PendingChallenge | null>(null);
   const [activeMatch, setActiveMatch] = useState<{
     match: MatchState;
@@ -566,7 +567,11 @@ export const App: React.FC = () => {
               />
             )}
             {tab === 'world' && (
-              <WorldTourScreen profile={profile} onChallengeNpc={handleChallengeNpc} />
+              <WorldTourScreen
+                profile={profile}
+                initialRegionId={worldFocusRegion}
+                onChallengeNpc={handleChallengeNpc}
+              />
             )}
             {tab === 'decks' && (
               <DeckBuilder
@@ -591,7 +596,15 @@ export const App: React.FC = () => {
                 onLaunchCustomMatch={handleLaunchCustomMatch}
               />
             )}
-            {tab === 'binder' && <CardBinder profile={profile} />}
+            {tab === 'binder' && (
+              <CardBinder
+                profile={profile}
+                onJumpToRegion={(rid) => {
+                  setWorldFocusRegion(rid);
+                  setTab('world');
+                }}
+              />
+            )}
           </>
         )}
       </main>

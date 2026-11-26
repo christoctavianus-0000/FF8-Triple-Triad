@@ -160,4 +160,43 @@ describe('ProfileStore, Softlock Protection & Queen Forge', () => {
     expect(queenHand).toContain('minimog');
     expect(queenHand).toContain('squall');
   });
+
+  it('tracks everCollectedIds and lostCardHolders across trade loss, recovery, and legacy migration', () => {
+    let profile = createDefaultProfile();
+    profile.collection.ifrit = 1;
+    profile.rareCardHolders.ifrit = 'player';
+    profile.everCollectedIds.push('ifrit');
+
+    // Lose a common starter card (geezard) and a rare card (ifrit)
+    profile = applyTradeToProfile(
+      profile,
+      { gainedByPlayer: [], lostByPlayer: ['geezard', 'ifrit'], protectedCardIds: [] },
+      'ma-dincht',
+      false,
+    ).profile;
+
+    expect(profile.collection.geezard).toBeUndefined();
+    expect(profile.collection.ifrit).toBeUndefined();
+    expect(profile.everCollectedIds).toContain('geezard');
+    expect(profile.everCollectedIds).toContain('ifrit');
+    expect(profile.lostCardHolders.geezard).toBe('npc:ma-dincht');
+    expect(profile.lostCardHolders.ifrit).toBe('npc:ma-dincht');
+
+    // Win both back -> lostCardHolders entries cleared
+    profile = applyTradeToProfile(
+      profile,
+      { gainedByPlayer: ['geezard', 'ifrit'], lostByPlayer: [], protectedCardIds: [] },
+      'ma-dincht',
+      false,
+    ).profile;
+    expect(profile.lostCardHolders.geezard).toBeUndefined();
+    expect(profile.lostCardHolders.ifrit).toBeUndefined();
+
+    // Legacy save migration: rareCardHolders shifted to another NPC without everCollectedIds
+    const legacy = sanitizeProfile({
+      rareCardHolders: { zell: 'npc:balamb-gatekeeper' },
+    });
+    expect(legacy.everCollectedIds).toContain('zell');
+    expect(legacy.lostCardHolders.zell).toBe('npc:balamb-gatekeeper');
+  });
 });

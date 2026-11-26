@@ -134,6 +134,8 @@ export function createDefaultProfile(): ProfileState {
   return {
     version: 1,
     collection,
+    everCollectedIds: [...STARTER_CARD_IDS],
+    lostCardHolders: {},
     rareCardHolders: createInitialRareHolders(),
     regions: createInitialRegions(),
     carriedRegionId: 'balamb',
@@ -218,6 +220,7 @@ export function sanitizeProfile(raw: unknown): ProfileState {
   }
 
   const rareCardHolders = createInitialRareHolders();
+  const defaultRareHolders = createInitialRareHolders();
   if (obj.rareCardHolders && typeof obj.rareCardHolders === 'object') {
     for (const [id, holder] of Object.entries(obj.rareCardHolders)) {
       if (!CARDS_BY_ID[id]?.isRare || typeof holder !== 'string') continue;
@@ -238,6 +241,47 @@ export function sanitizeProfile(raw: unknown): ProfileState {
       rareCardHolders[card.id] = 'player';
     } else if (rareCardHolders[card.id] === 'player') {
       collection[card.id] = 1;
+    }
+  }
+
+  const everCollectedSet = new Set<string>(Object.keys(collection));
+  if (Array.isArray(obj.everCollectedIds)) {
+    for (const id of obj.everCollectedIds) {
+      if (typeof id === 'string' && CARDS_BY_ID[id]) {
+        everCollectedSet.add(id);
+      }
+    }
+  }
+
+  const lostCardHolders: Record<string, RareCardHolder> = {};
+  if (obj.lostCardHolders && typeof obj.lostCardHolders === 'object') {
+    for (const [id, holder] of Object.entries(obj.lostCardHolders)) {
+      if (!CARDS_BY_ID[id] || (collection[id] ?? 0) > 0 || typeof holder !== 'string') continue;
+      if (
+        holder === 'queen' ||
+        (holder.startsWith('npc:') && NPCS_BY_ID[holder.slice(4)])
+      ) {
+        lostCardHolders[id] = holder as RareCardHolder;
+        everCollectedSet.add(id);
+      }
+    }
+  }
+
+  // Legacy migration: infer lost rare cards if holder shifted away from default
+  for (const card of ALL_CARDS) {
+    if (!card.isRare || (collection[card.id] ?? 0) > 0) continue;
+    const currentHolder = rareCardHolders[card.id];
+    const defaultHolder = defaultRareHolders[card.id];
+    if (
+      currentHolder &&
+      currentHolder !== 'unforged' &&
+      currentHolder !== 'player' &&
+      (currentHolder === 'queen' || currentHolder !== defaultHolder)
+    ) {
+      everCollectedSet.add(card.id);
+      if (!lostCardHolders[card.id]) {
+        lostCardHolders[card.id] = currentHolder;
+      }
     }
   }
 
@@ -327,6 +371,8 @@ export function sanitizeProfile(raw: unknown): ProfileState {
   return {
     version: 1,
     collection,
+    everCollectedIds: Array.from(everCollectedSet),
+    lostCardHolders,
     rareCardHolders,
     regions,
     carriedRegionId,
@@ -423,6 +469,11 @@ export function applyTradeToProfile(
   }
 
   const nextCollection: Record<string, number> = { ...profile.collection };
+  const nextEverCollected = new Set<string>([
+    ...profile.everCollectedIds,
+    ...Object.keys(profile.collection),
+  ]);
+  const nextLostHolders: Record<string, RareCardHolder> = { ...profile.lostCardHolders };
   const nextHolders: Record<string, RareCardHolder> = { ...profile.rareCardHolders };
   const nextForged = new Set(profile.queenForgedCardIds);
   const queenForgeMessages: string[] = [];
@@ -435,10 +486,14 @@ export function applyTradeToProfile(
       if ((nextCollection[id] ?? 0) === 0) {
         nextCollection[id] = 1;
         nextHolders[id] = 'player';
+        nextEverCollected.add(id);
+        delete nextLostHolders[id];
         gainedApplied.push(id);
       }
     } else {
       nextCollection[id] = Math.min(99, (nextCollection[id] ?? 0) + 1);
+      nextEverCollected.add(id);
+      delete nextLostHolders[id];
       gainedApplied.push(id);
     }
   }
@@ -464,9 +519,14 @@ export function applyTradeToProfile(
       nextCollection[id] = currentCount - 1;
     }
     lostApplied.push(id);
+    nextEverCollected.add(id);
+
+    const targetHolder: RareCardHolder = opponentNpcId ? `npc:${opponentNpcId}` : 'queen';
+    if ((nextCollection[id] ?? 0) === 0) {
+      nextLostHolders[id] = targetHolder;
+    }
 
     if (card.isRare) {
-      const targetHolder: RareCardHolder = opponentNpcId ? `npc:${opponentNpcId}` : 'queen';
       nextHolders[id] = targetHolder;
 
       // Check Queen of Cards rare card creation quest
@@ -502,6 +562,8 @@ export function applyTradeToProfile(
     profile: {
       ...profile,
       collection: nextCollection,
+      everCollectedIds: Array.from(nextEverCollected),
+      lostCardHolders: nextLostHolders,
       rareCardHolders: nextHolders,
       queenForgedCardIds: Array.from(nextForged),
       queenQuestStep: completedCount,

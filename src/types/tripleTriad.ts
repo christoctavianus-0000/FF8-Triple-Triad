@@ -210,6 +210,8 @@ export interface SavedDeck {
 export interface ProfileState {
   version: number;
   collection: Record<string, number>;
+  everCollectedIds: string[];
+  lostCardHolders: Record<string, RareCardHolder>;
   rareCardHolders: Record<string, RareCardHolder>;
   regions: Record<RegionId, RegionState>;
   carriedRegionId: RegionId | null;
