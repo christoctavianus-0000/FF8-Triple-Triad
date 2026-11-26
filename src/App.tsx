@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ArrowLeft,
   BookOpen,
   Globe,
   HelpCircle,
@@ -54,6 +55,21 @@ import { WorldTourScreen } from './components/WorldTourScreen';
 
 type ActiveTab = 'atrium' | 'world' | 'decks' | 'custom' | 'binder';
 
+const LIVE_ARCADE_HUB_URL = 'https://christoctavianus-0000.github.io/Mini-Game/';
+
+function getArcadeHubUrl(): string {
+  if (
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname === '[::1]') &&
+    /\/dist(\/|$)/i.test(window.location.pathname)
+  ) {
+    return '../../index.html';
+  }
+  return LIVE_ARCADE_HUB_URL;
+}
+
 interface PendingChallenge {
   mode: 'campaign' | 'custom';
   npc: NpcDefinition | null;
@@ -104,6 +120,7 @@ export const App: React.FC = () => {
     () => getUniqueCollectedCount(profile.collection),
     [profile.collection],
   );
+  const arcadeHubUrl = useMemo(() => getArcadeHubUrl(), []);
 
   const handleChallengeNpc = useCallback(
     (npc: NpcDefinition, mixRules: boolean, declinedCarry: boolean) => {
@@ -359,27 +376,41 @@ export const App: React.FC = () => {
     <div className="tt-shell">
       {/* 1. TOP NAVIGATION ("Garden Directory Bar") */}
       <header className="tt-window tt-topbar bg-directory-bar">
-        <button
-          type="button"
-          className="tt-brand bg-brand-btn"
-          onClick={() => {
-            soundEngine.playCursor();
-            setActiveMatch(null);
-            setPendingChallenge(null);
-            setTab('atrium');
-          }}
-        >
-          <svg className="bg-crest-logo" viewBox="0 0 40 40" aria-hidden="true">
-            <circle cx="20" cy="20" r="18" fill="#FFFFFF" stroke="#CBD5E1" strokeWidth="1.5" />
-            <circle cx="20" cy="20" r="13" fill="none" stroke="#3B82A6" strokeWidth="1.4" />
-            <polygon points="20,6 28,20 20,34 12,20" fill="none" stroke="#C89D54" strokeWidth="1.8" />
-            <circle cx="20" cy="20" r="3" fill="#14243B" />
-          </svg>
-          <div>
-            <h1>Balamb Garden</h1>
-            <span className="tt-brand-sub">TRIPLE TRIAD // SEED TERMINAL</span>
-          </div>
-        </button>
+        <div className="bg-brand-group">
+          {!activeMatch && !pendingChallenge && (
+            <a
+              href={arcadeHubUrl}
+              className="bg-hub-link"
+              onClick={() => soundEngine.playCursor()}
+              title="Back to Mini Game Arcade Hub"
+              aria-label="Back to Mini Game Arcade Hub"
+            >
+              <ArrowLeft size={14} aria-hidden="true" />
+              <span className="bg-hub-link__label">Arcade</span>
+            </a>
+          )}
+          <button
+            type="button"
+            className="tt-brand bg-brand-btn"
+            onClick={() => {
+              soundEngine.playCursor();
+              setActiveMatch(null);
+              setPendingChallenge(null);
+              setTab('atrium');
+            }}
+          >
+            <svg className="bg-crest-logo" viewBox="0 0 40 40" aria-hidden="true">
+              <circle cx="20" cy="20" r="18" fill="#FFFFFF" stroke="#CBD5E1" strokeWidth="1.5" />
+              <circle cx="20" cy="20" r="13" fill="none" stroke="#3B82A6" strokeWidth="1.4" />
+              <polygon points="20,6 28,20 20,34 12,20" fill="none" stroke="#C89D54" strokeWidth="1.8" />
+              <circle cx="20" cy="20" r="3" fill="#14243B" />
+            </svg>
+            <div>
+              <h1>Balamb Garden</h1>
+              <span className="tt-brand-sub">TRIPLE TRIAD // SEED TERMINAL</span>
+            </div>
+          </button>
+        </div>
 
         {!activeMatch && !pendingChallenge && (
           <nav className="bg-dir-links" aria-label="Garden sectors">

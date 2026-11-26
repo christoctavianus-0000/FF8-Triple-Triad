@@ -102,6 +102,50 @@ select {
   flex-wrap: wrap;
 }
 
+.bg-brand-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bg-hub-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border-aluminum);
+  background: var(--surface);
+  color: var(--ink-navy);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-decoration: none;
+  flex-shrink: 0;
+  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease, transform 0.14s ease;
+}
+
+.bg-hub-link:active {
+  transform: scale(0.96);
+}
+
+.bg-hub-link:focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .bg-hub-link:hover {
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+    background: rgba(59, 130, 166, 0.08);
+  }
+}
+
 .bg-brand-btn {
   display: flex;
   align-items: center;
@@ -2550,6 +2594,12 @@ select {
   .bg-directory-bar {
     padding: 10px 12px;
     gap: 10px;
+  }
+  .bg-hub-link {
+    padding: 0 9px;
+  }
+  .bg-hub-link__label {
+    display: none;
   }
   .bg-hero {
     padding: 16px 14px;
