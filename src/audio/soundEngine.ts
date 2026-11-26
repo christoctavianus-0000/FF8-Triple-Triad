@@ -130,48 +130,126 @@ class SoundEngine {
 
   private startBgm(): void {
     if (typeof window === 'undefined' || this.bgmTimer !== null) return;
-    // Playful upbeat 8-bar Triple Triad inspired synth bass + clap groove
-    const bassPattern = [146.83, 0, 146.83, 174.61, 196.0, 0, 220.0, 174.61];
-    const leadPattern = [587.33, 0, 698.46, 0, 783.99, 698.46, 587.33, 523.25];
+
+    // Serene Balamb Garden courtyard theme: warm Gmaj7 -> Em9 -> Cmaj7 -> D6 -> Bm7 -> Em7 -> Am9 -> D
+    // 8 bars x 8 eighth-note steps = 64 steps at ~86 BPM (348ms/step)
+    const arpeggioNotes = [
+      // Bar 1: Gmaj7 (G3, D4, F#4, B4, D4, F#4, G4, D4)
+      196.0, 293.66, 369.99, 493.88, 293.66, 369.99, 392.0, 293.66,
+      // Bar 2: Em9 (E3, B3, F#4, G4, B3, F#4, G4, B3)
+      164.81, 246.94, 369.99, 392.0, 246.94, 369.99, 392.0, 246.94,
+      // Bar 3: Cmaj7 (C3, G3, B3, E4, G3, B3, E4, G3)
+      130.81, 196.0, 246.94, 329.63, 196.0, 246.94, 329.63, 196.0,
+      // Bar 4: D6 (D3, A3, B3, F#4, A3, D4, F#4, A3)
+      146.83, 220.0, 246.94, 369.99, 220.0, 293.66, 369.99, 220.0,
+      // Bar 5: Bm7 (B2, F#3, A3, D4, F#3, A3, D4, F#3)
+      123.47, 185.0, 220.0, 293.66, 185.0, 220.0, 293.66, 185.0,
+      // Bar 6: Em7 (E3, B3, D4, G4, B3, D4, G4, B3)
+      164.81, 246.94, 293.66, 392.0, 246.94, 293.66, 392.0, 246.94,
+      // Bar 7: Am9 (A2, E3, B3, C4, E3, B3, E4, B3)
+      110.0, 164.81, 246.94, 261.63, 164.81, 246.94, 329.63, 246.94,
+      // Bar 8: Dsus4 -> D (D3, A3, D4, G4, F#4, D4, A3, D4)
+      146.83, 220.0, 293.66, 392.0, 369.99, 293.66, 220.0, 293.66,
+    ];
+
+    const bassRoots: Readonly<Record<number, number>> = {
+      0: 98.0,   // G2
+      8: 82.41,  // E2
+      16: 65.41, // C2
+      24: 73.42, // D2
+      32: 123.47,// B2
+      40: 82.41, // E2
+      48: 110.0, // A2
+      56: 73.42, // D2
+    };
+
+    // Airy flute melody floating softly across bars 1-8 (0 = rest)
+    const fluteMelody: Readonly<Record<number, number>> = {
+      2: 783.99,  // G5
+      4: 739.99,  // F#5
+      6: 587.33,  // D5
+      10: 659.25, // E5
+      14: 493.88, // B4
+      18: 523.25, // C5
+      20: 587.33, // D5
+      22: 659.25, // E5
+      26: 739.99, // F#5
+      34: 587.33, // D5
+      36: 659.25, // E5
+      38: 739.99, // F#5
+      42: 783.99, // G5
+      46: 659.25, // E5
+      50: 523.25, // C5
+      52: 493.88, // B4
+      54: 440.0,  // A4
+      58: 587.33, // D5
+      60: 739.99, // F#5
+    };
 
     this.bgmTimer = window.setInterval(() => {
       if (!this.bgmEnabled) return;
       const ctx = this.getContext();
       if (!ctx) return;
 
-      const step = this.bgmStep % bassPattern.length;
+      const step = this.bgmStep % arpeggioNotes.length;
+      const now = ctx.currentTime;
       this.bgmStep += 1;
 
-      const bass = bassPattern[step];
-      if (bass > 0) {
+      // 1. Warm acoustic plucked arpeggio (lowpass-filtered triangle)
+      const arpFreq = arpeggioNotes[step];
+      if (arpFreq > 0) {
         const osc = ctx.createOscillator();
-        const g = ctx.createGain();
+        const filter = ctx.createBiquadFilter();
+        const gain = ctx.createGain();
         osc.type = 'triangle';
-        osc.frequency.setValueAtTime(bass, ctx.currentTime);
-        g.gain.setValueAtTime(0.0001, ctx.currentTime);
-        g.gain.linearRampToValueAtTime(0.035, ctx.currentTime + 0.015);
-        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.19);
-        osc.connect(g);
-        g.connect(ctx.destination);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.2);
+        osc.frequency.setValueAtTime(arpFreq, now);
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(1450, now);
+        filter.frequency.exponentialRampToValueAtTime(620, now + 0.55);
+
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(step % 8 === 0 ? 0.036 : 0.025, now + 0.014);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.62);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.66);
       }
 
-      const lead = leadPattern[step];
-      if (lead > 0 && Math.floor(this.bgmStep / 8) % 2 === 1) {
-        const osc = ctx.createOscillator();
-        const g = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(lead, ctx.currentTime);
-        g.gain.setValueAtTime(0.0001, ctx.currentTime);
-        g.gain.linearRampToValueAtTime(0.022, ctx.currentTime + 0.015);
-        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.16);
-        osc.connect(g);
-        g.connect(ctx.destination);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.18);
+      // 2. Soft sub-bass pedal on bar downbeats & beat 3
+      const rootFreq = bassRoots[step] ?? (step % 8 === 4 ? bassRoots[step - 4] : undefined);
+      if (rootFreq) {
+        const bassOsc = ctx.createOscillator();
+        const bassGain = ctx.createGain();
+        bassOsc.type = 'sine';
+        bassOsc.frequency.setValueAtTime(rootFreq, now);
+        bassGain.gain.setValueAtTime(0.0001, now);
+        bassGain.gain.linearRampToValueAtTime(0.028, now + 0.04);
+        bassGain.gain.exponentialRampToValueAtTime(0.0001, now + 1.15);
+        bassOsc.connect(bassGain);
+        bassGain.connect(ctx.destination);
+        bassOsc.start(now);
+        bassOsc.stop(now + 1.2);
       }
-    }, 230);
+
+      // 3. Gentle flute counter-melody
+      const fluteFreq = fluteMelody[step];
+      if (fluteFreq) {
+        const fOsc = ctx.createOscillator();
+        const fGain = ctx.createGain();
+        fOsc.type = 'sine';
+        fOsc.frequency.setValueAtTime(fluteFreq, now);
+        fGain.gain.setValueAtTime(0.0001, now);
+        fGain.gain.linearRampToValueAtTime(0.018, now + 0.08);
+        fGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.85);
+        fOsc.connect(fGain);
+        fGain.connect(ctx.destination);
+        fOsc.start(now);
+        fOsc.stop(now + 0.9);
+      }
+    }, 348);
   }
 
   private stopBgm(): void {
@@ -179,6 +257,7 @@ class SoundEngine {
       window.clearInterval(this.bgmTimer);
       this.bgmTimer = null;
     }
+    this.bgmStep = 0;
   }
 }
 

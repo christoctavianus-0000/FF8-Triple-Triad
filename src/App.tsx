@@ -43,6 +43,7 @@ import type {
   TradeResolution,
   TradeRule,
 } from './types/tripleTriad';
+import { AtriumHome } from './components/AtriumHome';
 import { CardBinder } from './components/CardBinder';
 import { CustomMatchScreen } from './components/CustomMatchScreen';
 import { DeckBuilder } from './components/DeckBuilder';
@@ -51,7 +52,7 @@ import { MatchScreen } from './components/MatchScreen';
 import { MobileSheet } from './components/MobileSheet';
 import { WorldTourScreen } from './components/WorldTourScreen';
 
-type ActiveTab = 'world' | 'decks' | 'custom' | 'binder';
+type ActiveTab = 'atrium' | 'world' | 'decks' | 'custom' | 'binder';
 
 interface PendingChallenge {
   mode: 'campaign' | 'custom';
@@ -71,7 +72,7 @@ interface PendingChallenge {
 
 export const App: React.FC = () => {
   const [profile, setProfile] = useState<ProfileState>(() => loadProfile());
-  const [tab, setTab] = useState<ActiveTab>('world');
+  const [tab, setTab] = useState<ActiveTab>('atrium');
   const [pendingChallenge, setPendingChallenge] = useState<PendingChallenge | null>(null);
   const [activeMatch, setActiveMatch] = useState<{
     match: MatchState;
@@ -344,29 +345,67 @@ export const App: React.FC = () => {
     [activeMatch],
   );
 
+  const handleQuickDuel = useCallback(() => {
+    const starterNpc = NPCS_BY_ID['balamb-gatekeeper'];
+    if (starterNpc) {
+      handleChallengeNpc(starterNpc, false, false);
+    } else {
+      setTab('world');
+    }
+  }, [handleChallengeNpc]);
+
   return (
     <div className="tt-shell">
-      {/* Top Application Header */}
-      <header className="tt-window tt-topbar">
-        <div className="tt-brand">
-          <div className="tt-brand-emblem">TT</div>
+      {/* 1. TOP NAVIGATION ("Garden Directory Bar") */}
+      <header className="tt-window tt-topbar bg-directory-bar">
+        <button
+          type="button"
+          className="tt-brand bg-brand-btn"
+          onClick={() => {
+            soundEngine.playCursor();
+            setActiveMatch(null);
+            setPendingChallenge(null);
+            setTab('atrium');
+          }}
+        >
+          <svg className="bg-crest-logo" viewBox="0 0 40 40" aria-hidden="true">
+            <circle cx="20" cy="20" r="18" fill="#FFFFFF" stroke="#CBD5E1" strokeWidth="1.5" />
+            <circle cx="20" cy="20" r="13" fill="none" stroke="#3B82A6" strokeWidth="1.4" />
+            <polygon points="20,6 28,20 20,34 12,20" fill="none" stroke="#C89D54" strokeWidth="1.8" />
+            <circle cx="20" cy="20" r="3" fill="#14243B" />
+          </svg>
           <div>
-            <h1>Triple Triad</h1>
-            <span className="tt-brand-sub">Final Fantasy VIII</span>
+            <h1>Balamb Garden</h1>
+            <span className="tt-brand-sub">TRIPLE TRIAD // SEED TERMINAL</span>
           </div>
-        </div>
+        </button>
 
-        <div className="tt-topbar-stats">
-          <span className="tt-pill tt-pill--gold">
-            Album {uniqueOwnedCount}/110 {uniqueOwnedCount === 110 ? '★' : ''}
-          </span>
-          <span className="tt-pill">
-            {profile.stats.wins}W–{profile.stats.losses}L–{profile.stats.draws}D
-          </span>
-          {profile.settings.sandboxMode && (
-            <span className="tt-pill tt-pill--rule">Sandbox</span>
-          )}
-        </div>
+        {!activeMatch && !pendingChallenge && (
+          <nav className="bg-dir-links" aria-label="Garden sectors">
+            {(
+              [
+                { id: 'atrium', label: 'Atrium' },
+                { id: 'world', label: 'World Tour' },
+                { id: 'decks', label: 'Deck Builder' },
+                { id: 'custom', label: 'Custom Match' },
+                { id: 'binder', label: `Album ${uniqueOwnedCount}/110` },
+              ] as const
+            ).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`bg-dir-link ${tab === item.id ? 'is-active' : ''}`}
+                onClick={() => {
+                  soundEngine.playCursor();
+                  setTab(item.id);
+                }}
+              >
+                <span className="bg-ptr" aria-hidden="true">▶</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+        )}
 
         <div className="tt-topbar-actions">
           <button
@@ -386,8 +425,8 @@ export const App: React.FC = () => {
           <button
             type="button"
             className={`tt-icon-btn ${profile.settings.bgmEnabled ? 'is-active' : ''}`}
-            aria-label="Toggle Triple Triad Synth Groove"
-            title="Toggle Synth BGM"
+            aria-label="Toggle Balamb Garden BGM"
+            title="Toggle Balamb Garden BGM"
             onClick={() =>
               setProfile((p) => ({
                 ...p,
@@ -418,6 +457,19 @@ export const App: React.FC = () => {
           >
             <Settings size={16} />
           </button>
+          {!activeMatch && !pendingChallenge && (
+            <button
+              type="button"
+              className="tt-btn tt-btn--gold tt-btn--sm bg-dir-cta"
+              onClick={() => {
+                soundEngine.playConfirm();
+                handleQuickDuel();
+              }}
+            >
+              <span className="bg-ptr" aria-hidden="true">▶</span>
+              Quick Duel
+            </button>
+          )}
         </div>
       </header>
 
@@ -461,49 +513,58 @@ export const App: React.FC = () => {
           />
         ) : (
           <>
-            <nav className="tt-nav-tabs" aria-label="Main sections">
-              <button
-                type="button"
-                className={`tt-nav-tab ${tab === 'world' ? 'is-active' : ''}`}
-                onClick={() => {
-                  soundEngine.playCursor();
-                  setTab('world');
-                }}
-              >
-                <Globe size={16} /> World Tour
-              </button>
-              <button
-                type="button"
-                className={`tt-nav-tab ${tab === 'decks' ? 'is-active' : ''}`}
-                onClick={() => {
-                  soundEngine.playCursor();
-                  setTab('decks');
-                }}
-              >
-                <Layers size={16} /> Deck Builder
-              </button>
-              <button
-                type="button"
-                className={`tt-nav-tab ${tab === 'custom' ? 'is-active' : ''}`}
-                onClick={() => {
-                  soundEngine.playCursor();
-                  setTab('custom');
-                }}
-              >
-                <Sliders size={16} /> Custom Match
-              </button>
-              <button
-                type="button"
-                className={`tt-nav-tab ${tab === 'binder' ? 'is-active' : ''}`}
-                onClick={() => {
-                  soundEngine.playCursor();
-                  setTab('binder');
-                }}
-              >
-                <BookOpen size={16} /> Card Album ({uniqueOwnedCount}/110)
-              </button>
-            </nav>
+            {tab !== 'atrium' && (
+              <nav className="tt-nav-tabs" aria-label="Main sections">
+                <button
+                  type="button"
+                  className={`tt-nav-tab ${tab === 'world' ? 'is-active' : ''}`}
+                  onClick={() => {
+                    soundEngine.playCursor();
+                    setTab('world');
+                  }}
+                >
+                  <Globe size={16} /> World Tour
+                </button>
+                <button
+                  type="button"
+                  className={`tt-nav-tab ${tab === 'decks' ? 'is-active' : ''}`}
+                  onClick={() => {
+                    soundEngine.playCursor();
+                    setTab('decks');
+                  }}
+                >
+                  <Layers size={16} /> Deck Builder
+                </button>
+                <button
+                  type="button"
+                  className={`tt-nav-tab ${tab === 'custom' ? 'is-active' : ''}`}
+                  onClick={() => {
+                    soundEngine.playCursor();
+                    setTab('custom');
+                  }}
+                >
+                  <Sliders size={16} /> Custom Match
+                </button>
+                <button
+                  type="button"
+                  className={`tt-nav-tab ${tab === 'binder' ? 'is-active' : ''}`}
+                  onClick={() => {
+                    soundEngine.playCursor();
+                    setTab('binder');
+                  }}
+                >
+                  <BookOpen size={16} /> Card Album ({uniqueOwnedCount}/110)
+                </button>
+              </nav>
+            )}
 
+            {tab === 'atrium' && (
+              <AtriumHome
+                profile={profile}
+                onNavigate={(target) => setTab(target)}
+                onQuickDuel={handleQuickDuel}
+              />
+            )}
             {tab === 'world' && (
               <WorldTourScreen profile={profile} onChallengeNpc={handleChallengeNpc} />
             )}
@@ -562,8 +623,8 @@ export const App: React.FC = () => {
 
           <label className="tt-setting-row">
             <div>
-              <strong>Synth Groove BGM</strong>
-              <p className="tt-muted">Upbeat procedural card-table rhythm</p>
+              <strong>Balamb Garden BGM</strong>
+              <p className="tt-muted">Serene acoustic courtyard arpeggio &amp; flute theme</p>
             </div>
             <input
               type="checkbox"
