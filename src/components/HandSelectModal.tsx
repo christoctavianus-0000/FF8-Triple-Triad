@@ -5,8 +5,9 @@ import { SPECIAL_RULE_INFO, TRADE_RULE_INFO } from '../data/regions';
 import { buildRandomHand } from '../engine/engine';
 import { getVisibleRules } from '../engine/regionalRules';
 import { formatRank } from '../engine/rules';
+import { repairDeckCards } from '../state/profileStore';
 import { soundEngine } from '../audio/soundEngine';
-import type { AiTier, SpecialRule, TradeRule } from '../types/tripleTriad';
+import type { AiTier, SavedDeck, SpecialRule, TradeRule } from '../types/tripleTriad';
 import { CardView } from './CardView';
 import { Ff8Cursor } from './Ff8Cursor';
 
@@ -18,6 +19,8 @@ interface HandSelectModalProps {
   tradeRule: TradeRule;
   collection: Record<string, number>;
   initialHand: string[];
+  savedDecks?: SavedDeck[];
+  activeDeckId?: string;
   sandboxMode: boolean;
   onStartMatch: (hand: string[]) => void;
   onCancel: () => void;
@@ -31,6 +34,8 @@ export const HandSelectModal: React.FC<HandSelectModalProps> = ({
   tradeRule,
   collection,
   initialHand,
+  savedDecks = [],
+  activeDeckId,
   sandboxMode,
   onStartMatch,
   onCancel,
@@ -206,6 +211,31 @@ export const HandSelectModal: React.FC<HandSelectModalProps> = ({
             </div>
           )}
         </div>
+
+        {!isRandom && savedDecks.length > 0 && (
+          <div className="tt-prematch-decks" aria-label="Load saved deck">
+            <span className="tt-label">LOAD SAVED DECK</span>
+            <div className="tt-btn-row">
+              {savedDecks.map((deck) => {
+                const isEquipped = deck.id === activeDeckId;
+                return (
+                  <button
+                    key={deck.id}
+                    type="button"
+                    className={`tt-tab ${isEquipped ? 'is-active' : ''}`}
+                    onClick={() => {
+                      soundEngine.playConfirm();
+                      setSelectedHand(repairDeckCards(deck.cards, collection));
+                    }}
+                  >
+                    {deck.name}
+                    {isEquipped ? ' ★' : ''}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="tt-selected-slots">
           {Array.from({ length: 5 }, (_, idx) => {

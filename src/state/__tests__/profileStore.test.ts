@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   applyTradeToProfile,
   createDefaultProfile,
+  getActiveDeck,
   getTotalCardCount,
   sanitizeProfile,
+  setActiveDeckInProfile,
   STARTER_CARD_IDS,
+  updateDeckInProfile,
 } from '../profileStore';
 
 describe('ProfileStore, Softlock Protection & Queen Forge', () => {
@@ -65,7 +68,7 @@ describe('ProfileStore, Softlock Protection & Queen Forge', () => {
     expect(campaignOutcome.queenForgeMessages).toHaveLength(1);
   });
 
-  it('sanitizes corrupted save payloads cleanly', () => {
+  it('sanitizes corrupted save payloads cleanly and migrates legacy saves missing decks', () => {
     const sanitized = sanitizeProfile({
       collection: { 'not-a-card': 99, squall: 5 },
       ccGroupStage: 999,
@@ -76,5 +79,36 @@ describe('ProfileStore, Softlock Protection & Queen Forge', () => {
     expect(getTotalCardCount(sanitized.collection)).toBeGreaterThanOrEqual(5);
     expect(sanitized.ccGroupStage).toBe(7);
     expect(sanitized.queenRegionId).toBe('dollet');
+    expect(sanitized.decks).toHaveLength(5);
+    expect(sanitized.activeDeckId).toBe('deck_1');
+    expect(sanitized.decks[0].cards).toHaveLength(5);
+  });
+
+  it('supports updating, activating, and repairing saved decks after losing a card', () => {
+    let profile = createDefaultProfile();
+    profile.collection.ifrit = 1;
+    profile.rareCardHolders.ifrit = 'player';
+
+    profile = updateDeckInProfile(profile, 'deck_2', 'Fire Squad', [
+      'ifrit',
+      'geezard',
+      'funguar',
+      'bite-bug',
+      'red-bat',
+    ]);
+    profile = setActiveDeckInProfile(profile, 'deck_2');
+    expect(getActiveDeck(profile).name).toBe('Fire Squad');
+    expect(profile.lastDeckIds[0]).toBe('ifrit');
+
+    // Losing Ifrit should automatically repair deck_2 so Ifrit is no longer equipped
+    const outcome = applyTradeToProfile(
+      profile,
+      { gainedByPlayer: [], lostByPlayer: ['ifrit'], protectedCardIds: [] },
+      'balamb-gatekeeper',
+      false,
+    );
+    const repairedDeck2 = outcome.profile.decks.find((d) => d.id === 'deck_2')!;
+    expect(repairedDeck2.cards).toHaveLength(5);
+    expect(repairedDeck2.cards).not.toContain('ifrit');
   });
 });

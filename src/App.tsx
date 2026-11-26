@@ -3,6 +3,7 @@ import {
   BookOpen,
   Globe,
   HelpCircle,
+  Layers,
   Music,
   Settings,
   Sliders,
@@ -22,11 +23,14 @@ import {
 } from './engine/regionalRules';
 import {
   applyTradeToProfile,
+  getActiveDeck,
   getEffectiveCollection,
   getUniqueCollectedCount,
   loadProfile,
   resetProfile,
   saveProfile,
+  setActiveDeckInProfile,
+  updateDeckInProfile,
   updateStatsAfterMatch,
 } from './state/profileStore';
 import type {
@@ -41,12 +45,13 @@ import type {
 } from './types/tripleTriad';
 import { CardBinder } from './components/CardBinder';
 import { CustomMatchScreen } from './components/CustomMatchScreen';
+import { DeckBuilder } from './components/DeckBuilder';
 import { HandSelectModal } from './components/HandSelectModal';
 import { MatchScreen } from './components/MatchScreen';
 import { MobileSheet } from './components/MobileSheet';
 import { WorldTourScreen } from './components/WorldTourScreen';
 
-type ActiveTab = 'world' | 'custom' | 'binder';
+type ActiveTab = 'world' | 'decks' | 'custom' | 'binder';
 
 interface PendingChallenge {
   mode: 'campaign' | 'custom';
@@ -447,7 +452,9 @@ export const App: React.FC = () => {
             collection={
               pendingChallenge.sandbox ? getEffectiveCollection({ ...profile, settings: { ...profile.settings, sandboxMode: true } }) : effectiveCollection
             }
-            initialHand={profile.lastDeckIds}
+            initialHand={getActiveDeck(profile).cards}
+            savedDecks={profile.decks}
+            activeDeckId={profile.activeDeckId}
             sandboxMode={pendingChallenge.sandbox}
             onStartMatch={handleStartMatch}
             onCancel={() => setPendingChallenge(null)}
@@ -464,6 +471,16 @@ export const App: React.FC = () => {
                 }}
               >
                 <Globe size={16} /> World Tour
+              </button>
+              <button
+                type="button"
+                className={`tt-nav-tab ${tab === 'decks' ? 'is-active' : ''}`}
+                onClick={() => {
+                  soundEngine.playCursor();
+                  setTab('decks');
+                }}
+              >
+                <Layers size={16} /> Deck Builder
               </button>
               <button
                 type="button"
@@ -489,6 +506,17 @@ export const App: React.FC = () => {
 
             {tab === 'world' && (
               <WorldTourScreen profile={profile} onChallengeNpc={handleChallengeNpc} />
+            )}
+            {tab === 'decks' && (
+              <DeckBuilder
+                profile={profile}
+                onUpdateDeck={(deckId, name, cards) =>
+                  setProfile((p) => updateDeckInProfile(p, deckId, name, cards))
+                }
+                onSelectActiveDeck={(deckId) =>
+                  setProfile((p) => setActiveDeckInProfile(p, deckId))
+                }
+              />
             )}
             {tab === 'custom' && (
               <CustomMatchScreen

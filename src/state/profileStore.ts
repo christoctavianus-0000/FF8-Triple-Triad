@@ -7,6 +7,7 @@ import type {
   RareCardHolder,
   RegionId,
   RegionState,
+  SavedDeck,
   SpecialRule,
   TradeResolution,
   TradeRule,
@@ -68,11 +69,67 @@ export function createInitialRegions(): Record<RegionId, RegionState> {
   return regions;
 }
 
+const DEFAULT_DECK_SLOTS: readonly { id: string; name: string }[] = [
+  { id: 'deck_1', name: 'Balamb Starter' },
+  { id: 'deck_2', name: 'Custom Deck 2' },
+  { id: 'deck_3', name: 'Custom Deck 3' },
+  { id: 'deck_4', name: 'Custom Deck 4' },
+  { id: 'deck_5', name: 'Custom Deck 5' },
+];
+
+export function repairDeckCards(
+  rawCards: readonly unknown[],
+  collection: Readonly<Record<string, number>>,
+): string[] {
+  const kept: Array<string | null> = new Array(5).fill(null);
+  const usedCounts: Record<string, number> = {};
+
+  for (let i = 0; i < 5; i += 1) {
+    const id = typeof rawCards[i] === 'string' ? (rawCards[i] as string) : null;
+    if (id && CARDS_BY_ID[id] && (usedCounts[id] ?? 0) < (collection[id] ?? 0)) {
+      kept[i] = id;
+      usedCounts[id] = (usedCounts[id] ?? 0) + 1;
+    }
+  }
+
+  const ownedSorted = ALL_CARDS.filter((c) => (collection[c.id] ?? 0) > 0).sort((a, b) => {
+    const sumA = a.ranks.top + a.ranks.right + a.ranks.bottom + a.ranks.left;
+    const sumB = b.ranks.top + b.ranks.right + b.ranks.bottom + b.ranks.left;
+    return b.level - a.level || sumB - sumA || a.index - b.index;
+  });
+
+  for (let i = 0; i < 5; i += 1) {
+    if (kept[i] !== null) continue;
+    const replacement = ownedSorted.find(
+      (c) => (usedCounts[c.id] ?? 0) < (collection[c.id] ?? 0),
+    );
+    if (replacement) {
+      kept[i] = replacement.id;
+      usedCounts[replacement.id] = (usedCounts[replacement.id] ?? 0) + 1;
+    } else {
+      kept[i] = STARTER_CARD_IDS[i] ?? 'geezard';
+    }
+  }
+
+  return kept as string[];
+}
+
+export function createDefaultDecks(
+  seedCards: readonly string[] = STARTER_CARD_IDS.slice(0, 5),
+): SavedDeck[] {
+  return DEFAULT_DECK_SLOTS.map((slot, idx) => ({
+    id: slot.id,
+    name: slot.name,
+    cards: idx === 0 ? [...seedCards.slice(0, 5)] : [...STARTER_CARD_IDS.slice(0, 5)],
+  }));
+}
+
 export function createDefaultProfile(): ProfileState {
   const collection: Record<string, number> = {};
   for (const id of STARTER_CARD_IDS) {
     collection[id] = 1;
   }
+  const starterHand = STARTER_CARD_IDS.slice(0, 5);
 
   return {
     version: 1,
@@ -90,7 +147,9 @@ export function createDefaultProfile(): ProfileState {
     queenForgedCardIds: [],
     defeatedNpcIds: [],
     ccGroupStage: 0,
-    lastDeckIds: STARTER_CARD_IDS.slice(0, 5),
+    decks: createDefaultDecks(starterHand),
+    activeDeckId: 'deck_1',
+    lastDeckIds: starterHand,
     settings: {
       soundEnabled: true,
       bgmEnabled: false,
@@ -229,9 +288,41 @@ export function sanitizeProfile(raw: unknown): ProfileState {
     ? Array.from(new Set(obj.queenForgedCardIds.filter((id) => Boolean(CARDS_BY_ID[id]))))
     : [];
 
-  const lastDeckIds = Array.isArray(obj.lastDeckIds)
-    ? obj.lastDeckIds.filter((id) => Boolean(CARDS_BY_ID[id])).slice(0, 5)
-    : fallback.lastDeckIds;
+  const sandboxMode = obj.settings?.sandboxMode ?? false;
+  const repairPool: Record<string, number> = sandboxMode
+    ? Object.fromEntries(ALL_CARDS.map((c) => [c.id, c.isRare ? 1 : Math.max(5, collection[c.id] ?? 5)]))
+    : collection;
+
+  const lastDeckIds = repairDeckCards(
+    Array.isArray(obj.lastDeckIds) ? obj.lastDeckIds : fallback.lastDeckIds,
+    repairPool,
+  );
+
+  const rawDecks = Array.isArray(obj.decks) ? obj.decks : null;
+  const decks: SavedDeck[] = DEFAULT_DECK_SLOTS.map((slot, idx) => {
+    const saved = rawDecks?.find((d) => d && typeof d === 'object' && d.id === slot.id);
+    if (saved) {
+      const cleanName =
+        typeof saved.name === 'string' && saved.name.trim().length > 0
+          ? saved.name.trim().slice(0, 24)
+          : slot.name;
+      return {
+        id: slot.id,
+        name: cleanName,
+        cards: repairDeckCards(Array.isArray(saved.cards) ? saved.cards : [], repairPool),
+      };
+    }
+    return {
+      id: slot.id,
+      name: slot.name,
+      cards: idx === 0 ? [...lastDeckIds] : repairDeckCards([], repairPool),
+    };
+  });
+
+  const activeDeckId =
+    typeof obj.activeDeckId === 'string' && decks.some((d) => d.id === obj.activeDeckId)
+      ? obj.activeDeckId
+      : 'deck_1';
 
   return {
     version: 1,
@@ -261,12 +352,14 @@ export function sanitizeProfile(raw: unknown): ProfileState {
       typeof obj.ccGroupStage === 'number' && Number.isFinite(obj.ccGroupStage)
         ? Math.max(0, Math.min(7, Math.floor(obj.ccGroupStage)))
         : 0,
+    decks,
+    activeDeckId,
     lastDeckIds,
     settings: {
       soundEnabled: obj.settings?.soundEnabled ?? true,
       bgmEnabled: obj.settings?.bgmEnabled ?? false,
       ruleSpreadEnabled: obj.settings?.ruleSpreadEnabled ?? true,
-      sandboxMode: obj.settings?.sandboxMode ?? false,
+      sandboxMode,
       showHints: obj.settings?.showHints ?? true,
     },
     stats: {
@@ -398,6 +491,13 @@ export function applyTradeToProfile(
     nextForged.has(s.forgedCardId),
   ).length;
 
+  const repairedDecks = profile.decks.map((d) => ({
+    ...d,
+    cards: repairDeckCards(d.cards, nextCollection),
+  }));
+  const activeAfterTrade =
+    repairedDecks.find((d) => d.id === profile.activeDeckId) ?? repairedDecks[0];
+
   return {
     profile: {
       ...profile,
@@ -405,6 +505,8 @@ export function applyTradeToProfile(
       rareCardHolders: nextHolders,
       queenForgedCardIds: Array.from(nextForged),
       queenQuestStep: completedCount,
+      decks: repairedDecks,
+      lastDeckIds: activeAfterTrade ? [...activeAfterTrade.cards] : profile.lastDeckIds,
     },
     appliedTrade: {
       gainedByPlayer: gainedApplied,
@@ -412,6 +514,48 @@ export function applyTradeToProfile(
       protectedCardIds,
     },
     queenForgeMessages,
+  };
+}
+
+export function getActiveDeck(profile: ProfileState): SavedDeck {
+  return profile.decks.find((d) => d.id === profile.activeDeckId) ?? profile.decks[0];
+}
+
+export function updateDeckInProfile(
+  profile: ProfileState,
+  deckId: string,
+  name: string,
+  cards: readonly string[],
+): ProfileState {
+  const pool = getEffectiveCollection(profile);
+  const cleanName = name.trim().slice(0, 24) || 'Custom Deck';
+  const repairedCards = repairDeckCards(cards, pool);
+  const decks = profile.decks.map((d) =>
+    d.id === deckId ? { ...d, name: cleanName, cards: repairedCards } : d,
+  );
+  const nextLastDeckIds =
+    deckId === profile.activeDeckId ? [...repairedCards] : profile.lastDeckIds;
+
+  return {
+    ...profile,
+    decks,
+    lastDeckIds: nextLastDeckIds,
+  };
+}
+
+export function setActiveDeckInProfile(
+  profile: ProfileState,
+  deckId: string,
+): ProfileState {
+  const target = profile.decks.find((d) => d.id === deckId);
+  if (!target) return profile;
+  const pool = getEffectiveCollection(profile);
+  const repaired = repairDeckCards(target.cards, pool);
+  return {
+    ...profile,
+    activeDeckId: deckId,
+    decks: profile.decks.map((d) => (d.id === deckId ? { ...d, cards: repaired } : d)),
+    lastDeckIds: repaired,
   };
 }
 

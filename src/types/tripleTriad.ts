@@ -201,6 +201,12 @@ export interface QueenQuestStep {
 
 export type RareCardHolder = 'player' | 'unforged' | 'queen' | `npc:${string}`;
 
+export interface SavedDeck {
+  id: string;
+  name: string;
+  cards: string[];
+}
+
 export interface ProfileState {
   version: number;
   collection: Record<string, number>;
@@ -217,6 +223,8 @@ export interface ProfileState {
   queenForgedCardIds: string[];
   defeatedNpcIds: string[];
   ccGroupStage: number;
+  decks: SavedDeck[];
+  activeDeckId: string;
   lastDeckIds: string[];
   settings: {
     soundEnabled: boolean;
