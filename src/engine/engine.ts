@@ -99,6 +99,32 @@ export function buildRandomHand(
   return pool.slice(0, 5);
 }
 
+export function getHeldRareCardIdsForNpc(
+  npc: NpcDefinition,
+  rareCardHolders: Readonly<Record<string, string>>,
+): string[] {
+  const npcKey = `npc:${npc.id}`;
+  const isHeldByNpc = (holder: string | undefined): boolean =>
+    holder === npcKey || (Boolean(npc.isQueenOfCards) && holder === 'queen');
+
+  const heldSet = new Set<string>();
+  const ordered: string[] = [];
+
+  for (const cardId of npc.rareCardIds) {
+    if (CARDS_BY_ID[cardId]?.isRare && isHeldByNpc(rareCardHolders[cardId])) {
+      heldSet.add(cardId);
+      ordered.push(cardId);
+    }
+  }
+
+  const extraIds = Object.entries(rareCardHolders)
+    .filter(([cardId, holder]) => !heldSet.has(cardId) && CARDS_BY_ID[cardId]?.isRare && isHeldByNpc(holder))
+    .map(([cardId]) => cardId)
+    .sort((a, b) => (CARDS_BY_ID[a]?.index ?? 0) - (CARDS_BY_ID[b]?.index ?? 0));
+
+  return [...ordered, ...extraIds];
+}
+
 export function buildNpcHand(
   npc: NpcDefinition,
   allCards: readonly CardDefinition[],
@@ -106,10 +132,11 @@ export function buildNpcHand(
   rng: () => number = Math.random,
 ): string[] {
   const hand: string[] = [];
-  const availableRares = npc.rareCardIds.filter(
-    (cardId) => rareCardHolders[cardId] === `npc:${npc.id}`,
-  );
-  // 45% chance per rare card owned by NPC to appear in hand (at least 1 guaranteed if it's their signature bounty and rng < 0.75)
+  const availableRares = getHeldRareCardIdsForNpc(npc, rareCardHolders);
+  for (let i = availableRares.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    [availableRares[i], availableRares[j]] = [availableRares[j], availableRares[i]];
+  }
   for (const rareId of availableRares) {
     if (hand.length < 2 && rng() < 0.72) {
       hand.push(rareId);

@@ -4,6 +4,7 @@ import { CARDS_BY_ID } from '../data/cards';
 import { NPCS, QUEEN_QUEST_STEPS } from '../data/opponents';
 import { REGION_ORDER, REGIONS, SPECIAL_RULE_INFO, TRADE_RULE_INFO } from '../data/regions';
 import { soundEngine } from '../audio/soundEngine';
+import { getHeldRareCardIdsForNpc } from '../engine/engine';
 import { canOfferRuleMix, getVisibleRules } from '../engine/regionalRules';
 import type { NpcDefinition, ProfileState, RegionId } from '../types/tripleTriad';
 import { Ff8Cursor } from './Ff8Cursor';
@@ -107,7 +108,7 @@ export const WorldTourScreen: React.FC<WorldTourScreenProps> = ({
             const hasQueen = profile.queenRegionId === rid;
             const regionNpcs = NPCS.filter((n) => (n.isQueenOfCards ? hasQueen : n.regionId === rid));
             const remainingRares = regionNpcs.flatMap((n) =>
-              n.rareCardIds.filter((cid) => profile.rareCardHolders[cid] === `npc:${n.id}`),
+              getHeldRareCardIdsForNpc(n, profile.rareCardHolders),
             );
 
             return (
@@ -172,9 +173,7 @@ export const WorldTourScreen: React.FC<WorldTourScreenProps> = ({
             {npcsInRegion.map((npc) => {
               const unlocked = isNpcUnlocked(npc);
               const defeated = profile.defeatedNpcIds.includes(npc.id);
-              const heldRares = npc.rareCardIds.filter(
-                (cid) => profile.rareCardHolders[cid] === `npc:${npc.id}`,
-              );
+              const heldRares = getHeldRareCardIdsForNpc(npc, profile.rareCardHolders);
 
               return (
                 <article

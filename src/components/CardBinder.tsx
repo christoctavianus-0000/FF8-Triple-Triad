@@ -67,7 +67,10 @@ export const CardBinder: React.FC<CardBinderProps> = ({ profile }) => {
     if (holder?.startsWith('npc:')) {
       const npc = NPCS_BY_ID[holder.slice(4)];
       if (npc) {
-        return `Held by ${npc.name} in ${REGIONS[npc.regionId].name} (${npc.location})`;
+        const regionName = npc.isQueenOfCards
+          ? REGIONS[profile.queenRegionId].name
+          : REGIONS[npc.regionId].name;
+        return `Held by ${npc.name} in ${regionName} (${npc.location})`;
       }
     }
     return 'Unknown location';

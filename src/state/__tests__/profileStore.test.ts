@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { ALL_CARDS } from '../../data/cards';
+import { NPCS_BY_ID } from '../../data/opponents';
+import { buildNpcHand, getHeldRareCardIdsForNpc } from '../../engine/engine';
 import {
   applyTradeToProfile,
   createDefaultProfile,
@@ -110,5 +113,51 @@ describe('ProfileStore, Softlock Protection & Queen Forge', () => {
     const repairedDeck2 = outcome.profile.decks.find((d) => d.id === 'deck_2')!;
     expect(repairedDeck2.cards).toHaveLength(5);
     expect(repairedDeck2.cards).not.toContain('ifrit');
+  });
+
+  it('allows reclaiming any lost rare card from the NPC or Queen of Cards who took it', () => {
+    let profile = createDefaultProfile();
+    profile.collection.ifrit = 1;
+    profile.rareCardHolders.ifrit = 'player';
+    profile.collection.minimog = 1;
+    profile.rareCardHolders.minimog = 'player';
+    profile.collection.squall = 1;
+    profile.rareCardHolders.squall = 'player';
+
+    // Lose Ifrit to Balamb Gatekeeper (an unrelated NPC with rareCardIds: [])
+    profile = applyTradeToProfile(
+      profile,
+      { gainedByPlayer: [], lostByPlayer: ['ifrit'], protectedCardIds: [] },
+      'balamb-gatekeeper',
+      false,
+    ).profile;
+
+    const gatekeeper = NPCS_BY_ID['balamb-gatekeeper'];
+    expect(getHeldRareCardIdsForNpc(gatekeeper, profile.rareCardHolders)).toContain('ifrit');
+    const gatekeeperHand = buildNpcHand(gatekeeper, ALL_CARDS, profile.rareCardHolders, () => 0.1);
+    expect(gatekeeperHand).toContain('ifrit');
+
+    // Lose MiniMog to Queen of Cards (npc:queen-of-cards) & Squall in Custom Match ('queen')
+    profile = applyTradeToProfile(
+      profile,
+      { gainedByPlayer: [], lostByPlayer: ['minimog'], protectedCardIds: [] },
+      'queen-of-cards',
+      false,
+    ).profile;
+    profile = applyTradeToProfile(
+      profile,
+      { gainedByPlayer: [], lostByPlayer: ['squall'], protectedCardIds: [] },
+      null,
+      false,
+    ).profile;
+
+    const queen = NPCS_BY_ID['queen-of-cards'];
+    const queenHeld = getHeldRareCardIdsForNpc(queen, profile.rareCardHolders);
+    expect(queenHeld).toContain('minimog');
+    expect(queenHeld).toContain('squall');
+
+    const queenHand = buildNpcHand(queen, ALL_CARDS, profile.rareCardHolders, () => 0.1);
+    expect(queenHand).toContain('minimog');
+    expect(queenHand).toContain('squall');
   });
 });
